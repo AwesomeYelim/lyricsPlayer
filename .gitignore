@@ -1,0 +1,17 @@
+# 가상환경
+.venv*/
+env/
+venv/
+
+# 파이썬 캐시
+__pycache__/
+*.py[cod]
+
+# IDE 설정 파일 (PyCharm 등)
+.idea/
+
+# OS 파일
+.DS_Store
+
+# 환경 변수
+.env
