@@ -15,3 +15,10 @@ __pycache__/
 
 # 환경 변수
 .env
+
+
+# 그 밖에
+*.mp3
+*.txt
+*.lrc
+*.vtt

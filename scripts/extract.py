@@ -42,6 +42,7 @@ def vtt_to_lrc(vtt_path, lrc_path):
 
     lrc_lines = []
     time_pattern = re.compile(r'(\d+):(\d+):(\d+).(\d+) -->')
+    last_lyric = None  # 직전 가사 저장용
 
     for i, line in enumerate(lines):
         match = time_pattern.match(line)
@@ -49,37 +50,66 @@ def vtt_to_lrc(vtt_path, lrc_path):
             h, m, s, ms = map(int, match.groups())
             total_minutes = h * 60 + m
             lrc_time = f"[{total_minutes:02d}:{s:02d}.{int(ms / 10):02d}]"
+
             if i + 1 < len(lines):
                 lyric = lines[i + 1].strip()
-                if lyric:
-                    lrc_lines.append(f"{lrc_time}{lyric}")
+
+                if len(lyric) <= 1:
+                    continue
+                if re.match(r'^\[*[음악Music♪.·…~!?]*\]*$', lyric, re.IGNORECASE):
+                    continue
+
+                if lyric == last_lyric:
+                    continue
+
+                last_lyric = lyric
+                lrc_lines.append(f"{lrc_time}{lyric}")
 
     with open(lrc_path, 'w', encoding='utf-8') as f:
         f.write("\n".join(lrc_lines))
-    print(f"✅ {vtt_path} → {lrc_path} 변환 완료")
-
+    print(f"✅ {vtt_path} → {lrc_path} 변환 완료 (중복 및 전주 필터 적용됨)")
 
 def whisper_result_to_lrc(result, lrc_path):
     lrc_lines = []
+    last_text = None  # 직전 문장 기억
+
     for segment in result['segments']:
         start = segment['start']
         minutes = int(start // 60)
         seconds = int(start % 60)
         hundredths = int((start % 1) * 100)
         timestamp = f"[{minutes:02d}:{seconds:02d}.{hundredths:02d}]"
+
         text = segment['text'].strip()
+        text = re.sub(r'\s+', ' ', text)  # 공백 정리
+
+        # ⛔️ 중복 제거 필터
+        if text == last_text or text in [line[10:] for line in lrc_lines[-3:]]:
+            continue
+        last_text = text
+
         lrc_lines.append(f"{timestamp}{text}")
 
     with open(lrc_path, 'w', encoding='utf-8') as f:
         f.write("\n".join(lrc_lines))
 
-    print(f"✅ Whisper 자막을 {lrc_path} 파일로 저장했습니다.")
-
+    print(f"✅ Whisper 자막을 {lrc_path} 파일로 저장했습니다. (중복 제거됨)")
 
 def transcribe_with_whisper(audio):
     model = whisper.load_model("base")
     print("🎙️ Whisper로 자막 생성 중...")
     result = model.transcribe(audio + ".mp3")
+
+    filtered_segments = []
+    for seg in result['segments']:
+        text = seg['text'].strip()
+        if len(text) <= 1:
+            continue  # 너무 짧은 텍스트는 무시
+        if all(char in "♪.•…~[]" for char in text):
+            continue  # 무의미한 특수기호만 있는 경우
+        filtered_segments.append(seg)
+
+    result['segments'] = filtered_segments
     return result
 
 
@@ -101,11 +131,11 @@ def download_audio(url, output='audio'):
         ydl.download([url])
     return output + '.mp3'
 
+from sentence_transformers import SentenceTransformer, util
+
 def replace_lrc_lyrics(lrc_path, txt_path, similarity_threshold=0.6):
-    # 1. SBERT 모델 로드
     model = SentenceTransformer('all-MiniLM-L6-v2')
 
-    # 2. 기존 LRC 파일 읽기
     with open(lrc_path, 'r', encoding='utf-8') as f:
         lrc_lines = f.readlines()
 
@@ -120,15 +150,12 @@ def replace_lrc_lyrics(lrc_path, txt_path, similarity_threshold=0.6):
             timestamps.append('')
             original_lyrics.append(line.strip())
 
-    # 3. 정제된 가사 파일 읽기
     with open(txt_path, 'r', encoding='utf-8') as f:
         clean_lyrics = [line.strip() for line in f if line.strip()]
 
-    # 4. 임베딩 생성
     original_embeddings = model.encode(original_lyrics, convert_to_tensor=True)
     clean_embeddings = model.encode(clean_lyrics, convert_to_tensor=True)
 
-    # 5. 의미 유사도 기반 매칭
     new_lyrics = []
     used = [False] * len(clean_lyrics)
 
@@ -147,7 +174,6 @@ def replace_lrc_lyrics(lrc_path, txt_path, similarity_threshold=0.6):
             # 매칭 실패 시 기존 Whisper 가사 유지
             new_lyrics.append(orig)
 
-    # 6. 타임스탬프 + 새 가사 조합
     replaced_lines = [f"{ts}{lyric}" for ts, lyric in zip(timestamps, new_lyrics)]
 
     with open(lrc_path, 'w', encoding='utf-8') as f:
@@ -191,3 +217,5 @@ if __name__ == "__main__":
         print("Usage: python script.py <youtube_url>")
     else:
         main(sys.argv[1])
+
+
